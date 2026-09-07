@@ -42,13 +42,19 @@ jobs:
           git apply /tmp/zibno-branding.patch
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("WooCommerce/StoreWidgets/StoreWidgetTheme.swift")
-          text = path.read_text()
-          old = "return Color(.accent)"
-          new = "return Color(uiColor: .accent)"
-          if old not in text:
-              raise SystemExit(f"Expected compatibility target not found in {path}")
-          path.write_text(text.replace(old, new, 1))
+          replacements = {
+              Path("WooCommerce/StoreWidgets/StoreWidgetTheme.swift"): (
+                  "return Color(.accent)", "return Color(uiColor: .accent)"
+              ),
+              Path("WooCommerce/StoreWidgets/Homescreen/View+ContainerBackground.swift"): (
+                  "return Color(.brand)", "return Color(uiColor: .brand)"
+              ),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected compatibility target not found in {path}: {old}")
+              path.write_text(text.replace(old, new, 1))
           PY
 
       - name: Install native dependency
