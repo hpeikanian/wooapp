@@ -1,0 +1,76 @@
+name: Zibno iOS Build Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: zibno-ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-build:
+    name: Build for iOS Simulator
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout Zibno customization repo
+        uses: actions/checkout@v4
+
+      - name: Read pinned upstream commit
+        id: upstream
+        shell: bash
+        run: echo "sha=$(tr -d '\n' < UPSTREAM_COMMIT)" >> "$GITHUB_OUTPUT"
+
+      - name: Clone WooCommerce iOS
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/woocommerce/woocommerce-ios.git upstream
+          cd upstream
+          git checkout "${{ steps.upstream.outputs.sha }}"
+
+      - name: Apply Zibno patch
+        shell: bash
+        run: |
+          cd upstream
+          git apply --check "$GITHUB_WORKSPACE/patches/zibno.patch"
+          git apply "$GITHUB_WORKSPACE/patches/zibno.patch"
+
+      - name: Install native dependency
+        run: brew install xz
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          working-directory: upstream
+          bundler-cache: true
+
+      - name: Install project dependencies
+        working-directory: upstream
+        run: bundle exec rake dependencies
+
+      - name: Build WooCommerce scheme without signing
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace WooCommerce.xcworkspace \
+            -scheme WooCommerce \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee "$GITHUB_WORKSPACE/zibno-xcodebuild.log"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zibno-xcodebuild-log
+          path: zibno-xcodebuild.log
+          retention-days: 7
