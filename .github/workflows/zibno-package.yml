@@ -1,0 +1,107 @@
+name: Build Zibno Xcode Package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Prepare ready-to-open Xcode package
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout customization repo
+        uses: actions/checkout@v4
+
+      - name: Read pinned upstream commit
+        id: upstream
+        shell: bash
+        run: echo "sha=$(tr -d '\n' < UPSTREAM_COMMIT)" >> "$GITHUB_OUTPUT"
+
+      - name: Clone WooCommerce iOS
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/woocommerce/woocommerce-ios.git Zibno-Xcode
+          cd Zibno-Xcode
+          git checkout "${{ steps.upstream.outputs.sha }}"
+          rm -rf .git
+
+      - name: Apply Zibno customization and Xcode 26.6 fixes
+        shell: bash
+        run: |
+          cd Zibno-Xcode
+          sed '/^diff --git a\/WooCommerce\/StoreWidgets\/StoreWidgetTheme.swift/,$d' \
+            "$GITHUB_WORKSPACE/patches/zibno.patch" > /tmp/zibno-branding.patch
+          git apply --check /tmp/zibno-branding.patch
+          git apply /tmp/zibno-branding.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          replacements = {
+              Path("WooCommerce/StoreWidgets/StoreWidgetTheme.swift"): (
+                  "return Color(.accent)", "return Color(uiColor: .accent)"
+              ),
+              Path("WooCommerce/StoreWidgets/Homescreen/View+ContainerBackground.swift"): (
+                  "return Color(.brand)", "return Color(uiColor: .brand)"
+              ),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected compatibility target not found in {path}: {old}")
+              path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Install native dependency
+        run: brew install xz
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          working-directory: Zibno-Xcode
+          bundler-cache: true
+
+      - name: Install project dependencies
+        working-directory: Zibno-Xcode
+        run: bundle exec rake dependencies
+
+      - name: Add easy-open instructions
+        shell: bash
+        run: |
+          cat > Zibno-Xcode/OPEN_ME_FIRST.txt <<'EOF'
+          ZIBNO - READY FOR XCODE
+
+          1. Double-click WooCommerce.xcworkspace (NOT WooCommerce.xcodeproj).
+          2. Connect your iPhone to the Mac and tap Trust if asked.
+          3. In Xcode: Settings > Accounts, sign in with your Apple ID.
+          4. Select the WooCommerce app target > Signing & Capabilities.
+          5. Enable Automatically manage signing and choose your Team.
+          6. Select your iPhone as the run destination.
+          7. Press Run (▶).
+          8. If iPhone asks, enable Developer Mode in Settings > Privacy & Security.
+
+          This package is based on pinned upstream commit:
+          f7ea11f3ae69639eb8429144683c9ec7f2084f90
+          and includes the Zibno branding patch plus Xcode 26.6 color compatibility fixes.
+          EOF
+
+      - name: Verify workspace exists
+        shell: bash
+        run: |
+          test -d Zibno-Xcode/WooCommerce.xcworkspace
+          echo "Workspace is present."
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent Zibno-Xcode Zibno-Xcode-Ready.zip
+          ls -lh Zibno-Xcode-Ready.zip
+
+      - name: Upload ready Xcode project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zibno-Xcode-Ready
+          path: Zibno-Xcode-Ready.zip
+          if-no-files-found: error
+          retention-days: 14
