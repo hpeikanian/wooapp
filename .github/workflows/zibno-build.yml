@@ -36,8 +36,26 @@ jobs:
         shell: bash
         run: |
           cd upstream
-          git apply --check "$GITHUB_WORKSPACE/patches/zibno.patch"
-          git apply "$GITHUB_WORKSPACE/patches/zibno.patch"
+
+          # The final StoreWidgetTheme compatibility hunk was appended after the
+          # original branding patch. Apply the stable branding portion first.
+          sed '/^diff --git a\/WooCommerce\/StoreWidgets\/StoreWidgetTheme.swift/,$d' \
+            "$GITHUB_WORKSPACE/patches/zibno.patch" > /tmp/zibno-branding.patch
+
+          git apply --check /tmp/zibno-branding.patch
+          git apply /tmp/zibno-branding.patch
+
+          # Xcode 26.6 needs an explicit UIColor initializer here.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("WooCommerce/StoreWidgets/StoreWidgetTheme.swift")
+          text = path.read_text()
+          old = "return Color(.accent)"
+          new = "return Color(uiColor: .accent)"
+          if old not in text:
+              raise SystemExit(f"Expected compatibility target not found in {path}")
+          path.write_text(text.replace(old, new, 1))
+          PY
 
       - name: Install native dependency
         run: brew install xz
