@@ -1,0 +1,167 @@
+name: Zibno TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Optional build number; blank uses GitHub run number
+        required: false
+        type: string
+
+jobs:
+  testflight:
+    name: Archive and upload to TestFlight
+    runs-on: macos-latest
+    timeout-minutes: 150
+    environment: testflight
+
+    steps:
+      - name: Checkout Zibno customization repo
+        uses: actions/checkout@v4
+
+      - name: Read pinned upstream commit
+        id: upstream
+        shell: bash
+        run: echo "sha=$(tr -d '\n' < UPSTREAM_COMMIT)" >> "$GITHUB_OUTPUT"
+
+      - name: Clone WooCommerce iOS
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/woocommerce/woocommerce-ios.git upstream
+          cd upstream
+          git checkout "${{ steps.upstream.outputs.sha }}"
+
+      - name: Apply Zibno patch
+        shell: bash
+        run: |
+          cd upstream
+          git apply --check "$GITHUB_WORKSPACE/patches/zibno.patch"
+          git apply "$GITHUB_WORKSPACE/patches/zibno.patch"
+
+      - name: Install native dependency
+        run: brew install xz
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          working-directory: upstream
+          bundler-cache: true
+
+      - name: Install project dependencies
+        working-directory: upstream
+        run: bundle exec rake dependencies
+
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$P12_BASE64"
+          KEYCHAIN_PATH="$RUNNER_TEMP/zibno-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/zibno-distribution.p12"
+          echo "$P12_BASE64" | base64 --decode > "$P12_PATH"
+          security create-keychain -p "zibno-ci" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "zibno-ci" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "zibno-ci" "$KEYCHAIN_PATH"
+
+      - name: Install provisioning profiles
+        env:
+          PROFILES_BASE64_ZIP: ${{ secrets.IOS_PROVISIONING_PROFILES_ZIP_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PROFILES_BASE64_ZIP"
+          ZIP_PATH="$RUNNER_TEMP/zibno-profiles.zip"
+          OUT_DIR="$RUNNER_TEMP/zibno-profiles"
+          mkdir -p "$OUT_DIR" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILES_BASE64_ZIP" | base64 --decode > "$ZIP_PATH"
+          ditto -x -k "$ZIP_PATH" "$OUT_DIR"
+          find "$OUT_DIR" -type f -name '*.mobileprovision' -exec cp {} "$HOME/Library/MobileDevice/Provisioning Profiles/" \;
+
+      - name: Set build number
+        working-directory: upstream
+        env:
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        shell: bash
+        run: |
+          BUILD_NUMBER="${INPUT_BUILD_NUMBER:-${GITHUB_RUN_NUMBER}}"
+          echo "ZIBNO_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          xcrun agvtool new-version -all "$BUILD_NUMBER" || true
+
+      - name: Create App Store Connect API key file
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ASC_KEY_ID"
+          test -n "$ASC_PRIVATE_KEY_BASE64"
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo "$ASC_PRIVATE_KEY_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Archive
+        working-directory: upstream
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace WooCommerce.xcworkspace \
+            -scheme WooCommerce \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Zibno.xcarchive" \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            archive | tee "$GITHUB_WORKSPACE/zibno-archive.log"
+
+      - name: Export IPA
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>stripSwiftSymbols</key><true/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Zibno.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        shell: bash
+        run: |
+          IPA=$(find "$RUNNER_TEMP/export" -name '*.ipa' -print -quit)
+          test -n "$IPA"
+          xcrun altool --upload-app \
+            -f "$IPA" \
+            -t ios \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zibno-testflight-logs
+          path: zibno-archive.log
+          retention-days: 7
