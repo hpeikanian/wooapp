@@ -36,16 +36,10 @@ jobs:
         shell: bash
         run: |
           cd upstream
-
-          # The final StoreWidgetTheme compatibility hunk was appended after the
-          # original branding patch. Apply the stable branding portion first.
           sed '/^diff --git a\/WooCommerce\/StoreWidgets\/StoreWidgetTheme.swift/,$d' \
             "$GITHUB_WORKSPACE/patches/zibno.patch" > /tmp/zibno-branding.patch
-
           git apply --check /tmp/zibno-branding.patch
           git apply /tmp/zibno-branding.patch
-
-          # Xcode 26.6 needs an explicit UIColor initializer here.
           python3 - <<'PY'
           from pathlib import Path
           path = Path("WooCommerce/StoreWidgets/StoreWidgetTheme.swift")
@@ -75,20 +69,29 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          set +e
           xcodebuild \
             -workspace WooCommerce.xcworkspace \
             -scheme WooCommerce \
             -configuration Debug \
-            -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build | tee "$GITHUB_WORKSPACE/zibno-xcodebuild.log"
+            build 2>&1 | tee "$GITHUB_WORKSPACE/zibno-xcodebuild.log"
+          status=${PIPESTATUS[0]}
+          grep -E -i '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed|xcodebuild: error:' \
+            "$GITHUB_WORKSPACE/zibno-xcodebuild.log" > "$GITHUB_WORKSPACE/zibno-errors.log" || true
+          echo '===== ZIBNO XCODE ERRORS ====='
+          cat "$GITHUB_WORKSPACE/zibno-errors.log" || true
+          exit $status
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload build diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zibno-xcodebuild-log
-          path: zibno-xcodebuild.log
+          name: zibno-build-diagnostics
+          path: |
+            zibno-xcodebuild.log
+            zibno-errors.log
+          if-no-files-found: warn
           retention-days: 7
