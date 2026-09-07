@@ -1,0 +1,199 @@
+diff --git a/WooCommerce/Classes/Extensions/UITabBar+Appearance.swift b/WooCommerce/Classes/Extensions/UITabBar+Appearance.swift
+index 244cce7..440c37e 100644
+--- a/WooCommerce/Classes/Extensions/UITabBar+Appearance.swift
++++ b/WooCommerce/Classes/Extensions/UITabBar+Appearance.swift
+@@ -8,7 +8,10 @@ extension UITabBar {
+     ///
+     class func applyWooAppearance() {
+         let appearance = Self.appearance()
+-        appearance.tintColor = .accent
++        // Zibno uses a monochrome navigation system. Keeping this in the existing
++        // Woo appearance hook avoids introducing a parallel tab-bar implementation.
++        appearance.tintColor = .label
++        appearance.unselectedItemTintColor = .secondaryLabel
+ 
+         // tab bar needs to be translucent to get rid of the extra space at the bottom of
+         // the view controllers embedded in split view.
+@@ -23,7 +26,9 @@ extension UITabBar {
+     ///
+     static func wooAppearance() -> UITabBarAppearance {
+         let standardAppearance = UITabBarAppearance()
+-        standardAppearance.configureWithDefaultBackground()
++        standardAppearance.configureWithOpaqueBackground()
++        standardAppearance.backgroundColor = .systemBackground
++        standardAppearance.shadowColor = UIColor.label.withAlphaComponent(0.08)
+         applyWooAppearance(to: standardAppearance.inlineLayoutAppearance)
+         applyWooAppearance(to: standardAppearance.stackedLayoutAppearance)
+         applyWooAppearance(to: standardAppearance.compactInlineLayoutAppearance)
+diff --git a/WooCommerce/Classes/ViewRelated/Dashboard/DashboardView.swift b/WooCommerce/Classes/ViewRelated/Dashboard/DashboardView.swift
+index 819d023..df3d6b7 100644
+--- a/WooCommerce/Classes/ViewRelated/Dashboard/DashboardView.swift
++++ b/WooCommerce/Classes/ViewRelated/Dashboard/DashboardView.swift
+@@ -94,12 +94,46 @@ struct DashboardView: View {
+         GeometryReader { proxy in
+             ScrollView {
+                 VStack(spacing: Layout.padding) {
+-                    // Store title
+-                    Text(currentSite?.name ?? Localization.title)
+-                        .subheadlineStyle()
+-                        .padding(Layout.sectionHeadingPadding)
+-                        .frame(maxWidth: .infinity, alignment: .leading)
+-                        .renderedIf(verticalSizeClass == .regular)
++                    // Zibno branded store header. This stays isolated from WooCommerce
++                    // business logic so upstream updates remain straightforward to merge.
++                    VStack(alignment: .leading, spacing: 10) {
++                        HStack(alignment: .firstTextBaseline) {
++                            Text("ZIBNO")
++                                .font(.system(size: 36, weight: .black, design: .default))
++                                .tracking(1.4)
++                                .foregroundStyle(Color.primary)
++
++                            Spacer()
++
++                            Text("ADMIN")
++                                .font(.system(size: 11, weight: .semibold, design: .rounded))
++                                .tracking(1.1)
++                                .foregroundStyle(Color.secondary)
++                                .padding(.horizontal, 10)
++                                .padding(.vertical, 6)
++                                .background(Color(.secondarySystemBackground))
++                                .clipShape(Capsule())
++                        }
++
++                        Text("مدیریت فروشگاه")
++                            .font(.system(size: 18, weight: .semibold))
++                            .foregroundStyle(Color.primary)
++
++                        Text(currentSite?.name ?? Localization.title)
++                            .font(.subheadline)
++                            .foregroundStyle(Color.secondary)
++                            .lineLimit(1)
++                    }
++                    .padding(.horizontal, 20)
++                    .padding(.vertical, 18)
++                    .background(Color(.systemBackground))
++                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
++                    .overlay {
++                        RoundedRectangle(cornerRadius: 18, style: .continuous)
++                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
++                    }
++                    .padding(.horizontal, Layout.padding)
++                    .renderedIf(verticalSizeClass == .regular)
+ 
+                     // Feature announcement if any.
+                     featureAnnouncementCard
+@@ -109,7 +143,7 @@ struct DashboardView: View {
+                 .padding(.bottom, Layout.padding)
+             }
+         }
+-        .background(Color(.listBackground))
++        .background(Color(.systemGroupedBackground))
+         .navigationTitle(Localization.title)
+         .toolbar {
+             ToolbarItem(placement: .topBarTrailing) {
+@@ -479,7 +513,7 @@ private extension DashboardView {
+     enum Localization {
+         static let title = NSLocalizedString(
+             "dashboardView.title",
+-            value: "My store",
++            value: "فروشگاه",
+             comment: "Title of the bottom tab item that presents the user's store dashboard, and default title for the store dashboard"
+         )
+         static let done = NSLocalizedString(
+diff --git a/WooCommerce/Classes/ViewRelated/Dashboard/DashboardViewHostingController.swift b/WooCommerce/Classes/ViewRelated/Dashboard/DashboardViewHostingController.swift
+index 5a38fb3..e382b36 100644
+--- a/WooCommerce/Classes/ViewRelated/Dashboard/DashboardViewHostingController.swift
++++ b/WooCommerce/Classes/ViewRelated/Dashboard/DashboardViewHostingController.swift
+@@ -404,7 +404,7 @@ private extension DashboardViewHostingController {
+     enum Localization {
+         static let title = NSLocalizedString(
+             "dashboardViewHostingController.title",
+-            value: "My store",
++            value: "فروشگاه",
+             comment: "Title of the bottom tab item that presents the user's store dashboard, and default title for the store dashboard"
+         )
+     }
+diff --git a/WooCommerce/Classes/ViewRelated/Hub Menu/HubMenuViewController.swift b/WooCommerce/Classes/ViewRelated/Hub Menu/HubMenuViewController.swift
+index ecdf0a0..7d6d920 100644
+--- a/WooCommerce/Classes/ViewRelated/Hub Menu/HubMenuViewController.swift	
++++ b/WooCommerce/Classes/ViewRelated/Hub Menu/HubMenuViewController.swift	
+@@ -180,6 +180,6 @@ private extension HubMenuViewController {
+ 
+ private extension HubMenuViewController {
+     enum Localization {
+-        static let tabTitle = NSLocalizedString("Menu", comment: "Title of the Menu tab")
++        static let tabTitle = NSLocalizedString("zibno.tab.menu", value: "بیشتر", comment: "Zibno title of the Menu tab")
+     }
+ }
+diff --git a/WooCommerce/Classes/ViewRelated/Orders/OrdersSplitViewWrapperController.swift b/WooCommerce/Classes/ViewRelated/Orders/OrdersSplitViewWrapperController.swift
+index e6ea0a8..b759af3 100644
+--- a/WooCommerce/Classes/ViewRelated/Orders/OrdersSplitViewWrapperController.swift
++++ b/WooCommerce/Classes/ViewRelated/Orders/OrdersSplitViewWrapperController.swift
+@@ -235,7 +235,7 @@ extension OrdersSplitViewWrapperController: DeepLinkNavigator {
+ 
+ extension OrdersSplitViewWrapperController {
+     private enum Localization {
+-        static let ordersTabTitle = NSLocalizedString("Orders", comment: "The title of the Orders tab.")
++        static let ordersTabTitle = NSLocalizedString("zibno.tab.orders", value: "سفارش‌ها", comment: "Zibno title of the Orders tab.")
+         static let emptyOrderDetails = NSLocalizedString("No order selected",
+                                                          comment: "Message on the detail view of the Orders tab before any order is selected")
+     }
+diff --git a/WooCommerce/Classes/ViewRelated/Products/ProductsSplitViewWrapperController.swift b/WooCommerce/Classes/ViewRelated/Products/ProductsSplitViewWrapperController.swift
+index 1f15f29..9f720e6 100644
+--- a/WooCommerce/Classes/ViewRelated/Products/ProductsSplitViewWrapperController.swift
++++ b/WooCommerce/Classes/ViewRelated/Products/ProductsSplitViewWrapperController.swift
+@@ -99,8 +99,8 @@ extension ProductsSplitViewWrapperController: TabReselectionHandling {
+ 
+ extension ProductsSplitViewWrapperController {
+     private enum Localization {
+-        static let tabTitle = NSLocalizedString("productsTab.tabTitle",
+-                                                value: "Products",
++        static let tabTitle = NSLocalizedString("zibno.tab.products",
++                                                value: "محصولات",
+                                                 comment: "Title of the Products tab — plural form of Product")
+     }
+ }
+diff --git a/WooCommerce/Classes/ViewRelated/Products/ProductsViewController.swift b/WooCommerce/Classes/ViewRelated/Products/ProductsViewController.swift
+index bc587b8..e845e6f 100644
+--- a/WooCommerce/Classes/ViewRelated/Products/ProductsViewController.swift
++++ b/WooCommerce/Classes/ViewRelated/Products/ProductsViewController.swift
+@@ -715,7 +715,7 @@ private extension ProductsViewController {
+     }
+ 
+     func configureTabBarItem() {
+-        tabBarItem.title = NSLocalizedString("Products", comment: "Title of the Products tab — plural form of Product")
++        tabBarItem.title = NSLocalizedString("zibno.tab.products", value: "محصولات", comment: "Zibno title of the Products tab")
+         tabBarItem.image = .productImage
+         tabBarItem.accessibilityIdentifier = "tab-bar-products-item"
+     }
+diff --git a/WooCommerce/WooCommerce.xcodeproj/project.pbxproj b/WooCommerce/WooCommerce.xcodeproj/project.pbxproj
+index 9ceed76..e0f2baf 100644
+--- a/WooCommerce/WooCommerce.xcodeproj/project.pbxproj
++++ b/WooCommerce/WooCommerce.xcodeproj/project.pbxproj
+@@ -1453,7 +1453,7 @@
+ 		1A9690342359CF720061E383 /* Release-Alpha */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+-				APP_DISPLAY_NAME = "Woo (Pre-Alpha)";
++				APP_DISPLAY_NAME = "Zibno (Pre-Alpha)";
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-PreAlpha";
+ 				CODE_SIGN_ENTITLEMENTS = "Resources/Woo-Alpha.entitlements";
+ 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Resources/Woo-Alpha-macOS.entitlements";
+@@ -2228,7 +2228,7 @@
+ 		B56DB3E72049BFAA00D4AA8E /* Debug */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+-				APP_DISPLAY_NAME = "Woo (Dev)";
++				APP_DISPLAY_NAME = "Zibno (Dev)";
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Default";
+ 				CODE_SIGN_ENTITLEMENTS = "Resources/Woo-Debug.entitlements";
+ 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Resources/Woo-Debug-macOS.entitlements";
+@@ -2255,7 +2255,7 @@
+ 		B56DB3E82049BFAA00D4AA8E /* Release */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+-				APP_DISPLAY_NAME = Woo;
++				APP_DISPLAY_NAME = Zibno;
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Default";
+ 				CODE_SIGN_ENTITLEMENTS = "Resources/Woo-Release.entitlements";
+ 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Resources/Woo-Release-macOS.entitlements";
